@@ -24,8 +24,8 @@ local GATE_HASHES = {
 
 -- Base iron gate hashes (used as ingredients, need to detect in table)
 local BASE_GATE_HASHES = {
-    IRON_AND = "6747c6260d21f2c31ed264c27a57661f",
-    IRON_OR  = "f45720bca0931a75d8df948549a6b1d7",
+    IRON_AND = "0993b49a53e60ff0925e37f4e35b9fff",
+    IRON_OR  = "788f4ef4b727910d0eaf5291d11963ed",
 }
 
 local items = {
