@@ -1,7 +1,7 @@
 local TURTLE_IDS = { 1, 2, 3, 4, 5, 6, 7 }
 local MESSAGE = "restock"
-local SIGNAL_SIDE = "back"
-local MODEM_SIDE = "right"
+local SIGNAL_SIDE = "left"
+local MODEM_SIDE = "top"
 
 rednet.open(MODEM_SIDE)
 print("Central computer ready.")
