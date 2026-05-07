@@ -123,24 +123,19 @@ local function runCycle()
 
     print("--- Checking stock ---")
     local missingRetries = 0
-    local tableRetries = 0
-
-    -- Fix 1: accumulate ALL ingredient needs across ALL items first
-    -- before calculating how much to push, so shared ingredients
-    -- like redstone are summed correctly across multiple chipsets
     local inTable = getTableIngredients()
-    local totalNeeded = {}  -- total qty needed per ingredient key across all items
-    local ingDefs = {}      -- ingredient definitions keyed for push step
+    local ingDefs = {}
+    local totalNeeded = {}
 
+    -- First pass: figure out how many sets of each item we can and need to make
+    local itemSets = {}
     for _, item in ipairs(items) do
         local have = counts[item.name] or 0
         local need = TARGET - have
         print(item.name .. ": " .. have .. "/" .. TARGET)
 
         if need > 0 then
-            -- Fix 2: calculate sets based on actual deficit, not just one stack
-            local setsNeeded = math.ceil(need / 1)  -- 1 output per set
-            local sets = setsNeeded
+            local sets = need  -- how many we need to make
             local canPush = true
 
             for _, ing in ipairs(item.ingredients) do
@@ -157,20 +152,61 @@ local function runCycle()
                     sleep(WAIT_MISSING)
                     break
                 end
-                -- Limit sets by what's available
+                -- Limit sets by availability
                 local possibleSets = math.floor(available / qty)
                 sets = math.min(sets, possibleSets)
             end
 
-            if canPush and sets > 0 then
-                for _, ing in ipairs(item.ingredients) do
-                    local qty = ing.qty or 1
-                    local key = ing.id .. ":" .. ing.damage
-                    -- Accumulate total needed across all items
-                    totalNeeded[key] = (totalNeeded[key] or 0) + (sets * qty)
-                    ingDefs[key] = ing
+            if canPush then
+                itemSets[item.name] = sets
+            end
+        end
+    end
+
+    -- Second pass: sum up ALL ingredient requirements across ALL items
+    -- This correctly handles shared ingredients like redstone
+    for _, item in ipairs(items) do
+        local sets = itemSets[item.name] or 0
+        if sets > 0 then
+            for _, ing in ipairs(item.ingredients) do
+                local qty = ing.qty or 1
+                local key = ing.id .. ":" .. ing.damage
+                totalNeeded[key] = (totalNeeded[key] or 0) + (sets * qty)
+                ingDefs[key] = ing
+            end
+        end
+    end
+
+    -- However, first pass availability check didn't account for shared ingredients
+    -- being consumed by multiple items. Re-check availability against combined totals
+    -- and scale back proportionally if needed
+    for key, needed in pairs(totalNeeded) do
+        local ing = ingDefs[key]
+        local available = countItemIn(chest, ing.id, ing.damage)
+        if needed > available then
+            -- Scale back all items that use this ingredient proportionally
+            local ratio = available / needed
+            print("  -> Scaling back: only " .. available .. " of " .. ing.id .. " available, need " .. needed)
+            for _, item in ipairs(items) do
+                if itemSets[item.name] then
+                    for _, itemIng in ipairs(item.ingredients) do
+                        if itemIng.id == ing.id and itemIng.damage == ing.damage then
+                            itemSets[item.name] = math.floor(itemSets[item.name] * ratio)
+                        end
+                    end
                 end
-                missingRetries = 0
+            end
+            -- Recalculate totalNeeded after scaling
+            totalNeeded = {}
+            for _, it in ipairs(items) do
+                local s = itemSets[it.name] or 0
+                if s > 0 then
+                    for _, i in ipairs(it.ingredients) do
+                        local k = i.id .. ":" .. i.damage
+                        totalNeeded[k] = (totalNeeded[k] or 0) + (s * (i.qty or 1))
+                        ingDefs[k] = i
+                    end
+                end
             end
         end
     end
@@ -188,16 +224,18 @@ local function runCycle()
     -- Check available table slots
     local stacksToPush = 0
     for _ in pairs(totalToPush) do stacksToPush = stacksToPush + 1 end
-
     local availableSlots = getAvailableTableSlots()
+
     if stacksToPush > availableSlots then
-        tableRetries = tableRetries + 1
-        print("Not enough table slots: need " .. stacksToPush .. " have " .. availableSlots .. " (" .. tableRetries .. "/" .. MAX_RETRIES .. ")")
-        if tableRetries >= MAX_RETRIES then
-            print("Table still full after " .. MAX_RETRIES .. " attempts, stopping.")
+        print("Not enough table slots: need " .. stacksToPush .. " have " .. availableSlots)
+        print("Waiting 2 min for table to clear...")
+        sleep(WAIT_TABLE_FULL)
+        -- Recheck after waiting
+        availableSlots = getAvailableTableSlots()
+        if stacksToPush > availableSlots then
+            print("Table still full, stopping.")
             return false
         end
-        sleep(WAIT_TABLE_FULL)
     end
 
     -- Push all ingredients in one go
@@ -238,7 +276,6 @@ local function runCycle()
         end
     until clearCount >= 3
 
-    -- Return whether fully stocked after this cycle
     local finalCounts = countChipsets()
     return isFullyStocked(finalCounts)
 end
