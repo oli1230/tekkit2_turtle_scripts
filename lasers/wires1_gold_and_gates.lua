@@ -23,35 +23,35 @@ local GATE_HASHES = {
 
 local items = {
     -- 8 pipe wires (shared ingredients: redstone + dye/color ingredient)
-    { name = "White Wire",   type = "wire", damage = 0,  ingredients = {
+    { name = "White Wire",   type = "wire", damage = 0, output = 8,  ingredients = {
         { id = "minecraft:redstone", damage = 0,  qty = 1 },
         { id = "minecraft:dye",      damage = 15, qty = 1 },
     }},
-    { name = "Red Wire",     type = "wire", damage = 14, ingredients = {
+    { name = "Red Wire",     type = "wire", damage = 14, output = 8, ingredients = {
         { id = "minecraft:redstone", damage = 0,  qty = 1 },
         { id = "minecraft:dye",      damage = 1,  qty = 1 },
     }},
-    { name = "Green Wire",   type = "wire", damage = 13, ingredients = {
+    { name = "Green Wire",   type = "wire", damage = 13, output = 8, ingredients = {
         { id = "minecraft:redstone", damage = 0,  qty = 1 },
         { id = "minecraft:dye",      damage = 2,  qty = 1 },
     }},
-    { name = "Cyan Wire",    type = "wire", damage = 9,  ingredients = {
+    { name = "Cyan Wire",    type = "wire", damage = 9, output = 8, ingredients = {
         { id = "minecraft:redstone", damage = 0,  qty = 1 },
         { id = "minecraft:dye",      damage = 6,  qty = 1 },
     }},
-    { name = "Magenta Wire", type = "wire", damage = 2,  ingredients = {
+    { name = "Magenta Wire", type = "wire", damage = 2, output = 8, ingredients = {
         { id = "minecraft:redstone", damage = 0,  qty = 1 },
         { id = "minecraft:dye",      damage = 13, qty = 1 },
     }},
-    { name = "Purple Wire",  type = "wire", damage = 10, ingredients = {
+    { name = "Purple Wire",  type = "wire", damage = 10, output = 8, ingredients = {
         { id = "minecraft:redstone", damage = 0,  qty = 1 },
         { id = "minecraft:dye",      damage = 5,  qty = 1 },
     }},
-    { name = "Gray Wire",    type = "wire", damage = 7,  ingredients = {
+    { name = "Gray Wire",    type = "wire", damage = 7, output = 8, ingredients = {
         { id = "minecraft:redstone", damage = 0,  qty = 1 },
         { id = "minecraft:dye",      damage = 8,  qty = 1 },
     }},
-    { name = "Blue Wire",    type = "wire", damage = 11, ingredients = {
+    { name = "Blue Wire",    type = "wire", damage = 11, output = 8, ingredients = {
         { id = "minecraft:redstone", damage = 0,  qty = 1 },
         { id = "minecraft:dye",      damage = 4,  qty = 1 },
     }},
@@ -184,7 +184,14 @@ local function dumpTurtleInventory()
     end
 end
 
+local function emptyAssemblyTable()
+    for slot, item in pairs(above.list()) do
+        above.pushItems(peripheral.getName(chest), slot, item.count)
+    end
+end
+
 function runCycle()
+    emptyAssemblyTable()
     local counts = countOutputs()
     if isFullyStocked(counts) then
         print("Already fully stocked, nothing to do.")
@@ -199,7 +206,7 @@ function runCycle()
         print(item.name .. ": " .. have .. "/" .. TARGET)
 
         if have < TARGET then
-            -- Check if table has room for all this item's ingredients
+            local output = item.output or 1  -- default to 1 if not specified
             local slotsNeeded = #item.ingredients
             local availableSlots = getAvailableTableSlots()
 
@@ -208,7 +215,6 @@ function runCycle()
                 break
             end
 
-            -- Check all ingredients are available
             local canPush = true
             local pushQtys = {}
             for _, ing in ipairs(item.ingredients) do
@@ -225,28 +231,10 @@ function runCycle()
                     sleep(WAIT_MISSING)
                     break
                 end
-                -- Push one stack's worth, limited by availability
-                local toPush = math.min(STACK * qty, available)
+                -- Calculate how many sets we need based on output ratio
+                local setsNeeded = math.ceil((TARGET - have) / output)
+                local toPush = math.min(setsNeeded * qty, available, STACK)
                 pushQtys[getIngKey(ing)] = { ing = ing, qty = toPush }
-            end
-
-            if canPush then
-                for _, entry in pairs(pushQtys) do
-                    local remaining = entry.qty
-                    while remaining > 0 do
-                        local slot = findSlot(entry.ing)
-                        if slot then
-                            local toPush = math.min(remaining, STACK)
-                            print("  -> Pushing " .. toPush .. "x " .. entry.ing.id)
-                            chest.pushItems(above_name, slot, toPush)
-                            remaining = remaining - toPush
-                        else
-                            print("  -> Could not find " .. entry.ing.id .. " in chest!")
-                            break
-                        end
-                    end
-                end
-                missingRetries = 0
             end
         end
     end
@@ -261,6 +249,7 @@ function runCycle()
             local detail = turtle.getItemDetail(i)
             if detail and (detail.name == WIRE or detail.name == GATE or detail.name == CHIPSET) then
                 hasOutput = true
+        
                 break
             end
         end
