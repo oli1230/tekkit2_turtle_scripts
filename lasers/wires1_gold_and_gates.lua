@@ -206,7 +206,7 @@ function runCycle()
         print(item.name .. ": " .. have .. "/" .. TARGET)
 
         if have < TARGET then
-            local output = item.output or 1  -- default to 1 if not specified
+            local output = item.output or 1
             local slotsNeeded = #item.ingredients
             local availableSlots = getAvailableTableSlots()
 
@@ -231,10 +231,29 @@ function runCycle()
                     sleep(WAIT_MISSING)
                     break
                 end
-                -- Calculate how many sets we need based on output ratio
                 local setsNeeded = math.ceil((TARGET - have) / output)
                 local toPush = math.min(setsNeeded * qty, available, STACK)
                 pushQtys[getIngKey(ing)] = { ing = ing, qty = toPush }
+            end
+
+            -- THIS BLOCK WAS MISSING
+            if canPush then
+                for _, entry in pairs(pushQtys) do
+                    local remaining = entry.qty
+                    while remaining > 0 do
+                        local slot = findSlot(entry.ing)
+                        if slot then
+                            local toPush = math.min(remaining, STACK)
+                            print("  -> Pushing " .. toPush .. "x " .. entry.ing.id)
+                            chest.pushItems(above_name, slot, toPush)
+                            remaining = remaining - toPush
+                        else
+                            print("  -> Could not find " .. entry.ing.id .. " in chest!")
+                            break
+                        end
+                    end
+                end
+                missingRetries = 0
             end
         end
     end
@@ -249,7 +268,6 @@ function runCycle()
             local detail = turtle.getItemDetail(i)
             if detail and (detail.name == WIRE or detail.name == GATE or detail.name == CHIPSET) then
                 hasOutput = true
-        
                 break
             end
         end
