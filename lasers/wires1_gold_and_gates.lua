@@ -184,7 +184,7 @@ local function dumpTurtleInventory()
     end
 end
 
-local function runCycle()
+function runCycle()
     local counts = countOutputs()
     if isFullyStocked(counts) then
         print("Already fully stocked, nothing to do.")
