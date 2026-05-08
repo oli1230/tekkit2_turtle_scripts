@@ -193,21 +193,24 @@ local function runCycle()
 
     print("--- Checking stock ---")
     local missingRetries = 0
-    local inTable = getTableIngredients()
-    local ingDefs = {}
-    local totalNeeded = {}
 
-    -- First pass: calculate sets needed per item
-    local itemSets = {}
     for _, item in ipairs(items) do
         local have = counts[item.name] or 0
-        local need = TARGET - have
         print(item.name .. ": " .. have .. "/" .. TARGET)
 
-        if need > 0 then
-            local sets = need
-            local canPush = true
+        if have < TARGET then
+            -- Check if table has room for all this item's ingredients
+            local slotsNeeded = #item.ingredients
+            local availableSlots = getAvailableTableSlots()
 
+            if slotsNeeded > availableSlots then
+                print("  -> Not enough table slots for " .. item.name .. " (need " .. slotsNeeded .. " have " .. availableSlots .. "), stopping cycle.")
+                break
+            end
+
+            -- Check all ingredients are available
+            local canPush = true
+            local pushQtys = {}
             for _, ing in ipairs(item.ingredients) do
                 local qty = ing.qty or 1
                 local available = countItemIn(chest, ing)
@@ -222,105 +225,121 @@ local function runCycle()
                     sleep(WAIT_MISSING)
                     break
                 end
-                local possibleSets = math.floor(available / qty)
-                sets = math.min(sets, possibleSets)
+                -- Push one stack's worth, limited by availability
+                local toPush = math.min(STACK * qty, available)
+                pushQtys[getIngKey(ing)] = { ing = ing, qty = toPush }
             end
 
             if canPush then
-                itemSets[item.name] = sets
-            end
-        end
-    end
-
-    -- Second pass: sum ALL ingredient requirements across ALL items
-    for _, item in ipairs(items) do
-        local sets = itemSets[item.name] or 0
-        if sets > 0 then
-            for _, ing in ipairs(item.ingredients) do
-                local qty = ing.qty or 1
-                local key = getIngKey(ing)
-                totalNeeded[key] = (totalNeeded[key] or 0) + (sets * qty)
-                ingDefs[key] = ing
-            end
-        end
-    end
-
-    -- Scale back if shared ingredients are over-committed
-    for key, needed in pairs(totalNeeded) do
-        local ing = ingDefs[key]
-        local available = countItemIn(chest, ing)
-        if needed > available then
-            local ratio = available / needed
-            print("  -> Scaling back: only " .. available .. " of " .. ing.id .. " available, need " .. needed)
-            for _, item in ipairs(items) do
-                if itemSets[item.name] then
-                    for _, itemIng in ipairs(item.ingredients) do
-                        if getIngKey(itemIng) == key then
-                            itemSets[item.name] = math.floor(itemSets[item.name] * ratio)
+                for _, entry in pairs(pushQtys) do
+                    local remaining = entry.qty
+                    while remaining > 0 do
+                        local slot = findSlot(entry.ing)
+                        if slot then
+                            local toPush = math.min(remaining, STACK)
+                            print("  -> Pushing " .. toPush .. "x " .. entry.ing.id)
+                            chest.pushItems(above_name, slot, toPush)
+                            remaining = remaining - toPush
+                        else
+                            print("  -> Could not find " .. entry.ing.id .. " in chest!")
+                            break
                         end
                     end
                 end
+                missingRetries = 0
             end
-            -- Recalculate after scaling
-            totalNeeded = {}
-            ingDefs = {}
-            for _, it in ipairs(items) do
-                local s = itemSets[it.name] or 0
-                if s > 0 then
-                    for _, i in ipairs(it.ingredients) do
-                        local k = getIngKey(i)
-                        totalNeeded[k] = (totalNeeded[k] or 0) + (s * (i.qty or 1))
-                        ingDefs[k] = i
+        end
+    end
+
+    -- Monitor for returning items
+    print("Monitoring for returning items...")
+    local clearCount = 0
+    repeat
+        sleep(7)
+        local hasOutput = false
+        for i = 1, 16 do
+            local detail = turtle.getItemDetail(i)
+            if detail and (detail.name == WIRE or detail.name == GATE or detail.name == CHIPSET) then
+                hasOutput = true
+                break
+            end
+        end
+        if hasOutput then
+            print("Items returning, dumping and resetting timer...")
+            dumpTurtleInventory()
+            clearCount = 0
+        else
+            clearCount = clearCount + 1
+            print("Clear check " .. clearCount .. "/3")
+            dumpTurtleInventory()
+        end
+    until clearCount >= 3
+
+    local finalCounts = countOutputs()
+    return isFullyStocked(finalCounts)
+endlocal function runCycle()
+    local counts = countOutputs()
+    if isFullyStocked(counts) then
+        print("Already fully stocked, nothing to do.")
+        return true
+    end
+
+    print("--- Checking stock ---")
+    local missingRetries = 0
+
+    for _, item in ipairs(items) do
+        local have = counts[item.name] or 0
+        print(item.name .. ": " .. have .. "/" .. TARGET)
+
+        if have < TARGET then
+            -- Check if table has room for all this item's ingredients
+            local slotsNeeded = #item.ingredients
+            local availableSlots = getAvailableTableSlots()
+
+            if slotsNeeded > availableSlots then
+                print("  -> Not enough table slots for " .. item.name .. " (need " .. slotsNeeded .. " have " .. availableSlots .. "), stopping cycle.")
+                break
+            end
+
+            -- Check all ingredients are available
+            local canPush = true
+            local pushQtys = {}
+            for _, ing in ipairs(item.ingredients) do
+                local qty = ing.qty or 1
+                local available = countItemIn(chest, ing)
+                if available == 0 then
+                    canPush = false
+                    missingRetries = missingRetries + 1
+                    print("  -> No " .. ing.id .. " available (" .. missingRetries .. "/" .. MAX_RETRIES .. ")")
+                    if missingRetries >= MAX_RETRIES then
+                        print("  -> Too many missing ingredient failures, stopping.")
+                        return false
                     end
-                end
-            end
-        end
-    end
-
-    -- Subtract what's already in the table
-    local totalToPush = {}
-    for key, needed in pairs(totalNeeded) do
-        local alreadyInTable = inTable[key] or 0
-        local toPush = math.max(0, needed - alreadyInTable)
-        if toPush > 0 then
-            totalToPush[key] = toPush
-        end
-    end
-
-    -- Check available table slots
-    local stacksToPush = 0
-    for _ in pairs(totalToPush) do stacksToPush = stacksToPush + 1 end
-    local availableSlots = getAvailableTableSlots()
-
-    if stacksToPush > availableSlots then
-        print("Not enough table slots: need " .. stacksToPush .. " have " .. availableSlots)
-        print("Waiting 2 min for table to clear...")
-        sleep(WAIT_TABLE_FULL)
-        availableSlots = getAvailableTableSlots()
-        if stacksToPush > availableSlots then
-            print("Table still full, stopping.")
-            return false
-        end
-    end
-
-    -- Push all ingredients looping for multiple stacks
-    for key, qty in pairs(totalToPush) do
-        local ing = ingDefs[key]
-        if ing == nil then
-            print("Warning: no ingredient definition for key " .. key .. ", skipping")
-        elseif qty > 0 then
-            local remaining = qty
-            while remaining > 0 do
-                local slot = findSlot(ing)
-                if slot then
-                    local toPush = math.min(remaining, STACK)
-                    print("Pushing " .. toPush .. "x " .. ing.id .. " (" .. remaining .. " remaining)")
-                    chest.pushItems(above_name, slot, toPush)
-                    remaining = remaining - toPush
-                else
-                    print("Could not find " .. ing.id .. " in chest!")
+                    sleep(WAIT_MISSING)
                     break
                 end
+                -- Push one stack's worth, limited by availability
+                local toPush = math.min(STACK * qty, available)
+                pushQtys[getIngKey(ing)] = { ing = ing, qty = toPush }
+            end
+
+            if canPush then
+                for _, entry in pairs(pushQtys) do
+                    local remaining = entry.qty
+                    while remaining > 0 do
+                        local slot = findSlot(entry.ing)
+                        if slot then
+                            local toPush = math.min(remaining, STACK)
+                            print("  -> Pushing " .. toPush .. "x " .. entry.ing.id)
+                            chest.pushItems(above_name, slot, toPush)
+                            remaining = remaining - toPush
+                        else
+                            print("  -> Could not find " .. entry.ing.id .. " in chest!")
+                            break
+                        end
+                    end
+                end
+                missingRetries = 0
             end
         end
     end
