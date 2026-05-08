@@ -135,7 +135,7 @@ local function runCycle()
         print(item.name .. ": " .. have .. "/" .. TARGET)
 
         if need > 0 then
-            local sets = need  -- how many we need to make
+            local sets = need
             local canPush = true
 
             for _, ing in ipairs(item.ingredients) do
@@ -152,7 +152,6 @@ local function runCycle()
                     sleep(WAIT_MISSING)
                     break
                 end
-                -- Limit sets by availability
                 local possibleSets = math.floor(available / qty)
                 sets = math.min(sets, possibleSets)
             end
@@ -164,7 +163,6 @@ local function runCycle()
     end
 
     -- Second pass: sum up ALL ingredient requirements across ALL items
-    -- This correctly handles shared ingredients like redstone
     for _, item in ipairs(items) do
         local sets = itemSets[item.name] or 0
         if sets > 0 then
@@ -177,14 +175,11 @@ local function runCycle()
         end
     end
 
-    -- However, first pass availability check didn't account for shared ingredients
-    -- being consumed by multiple items. Re-check availability against combined totals
-    -- and scale back proportionally if needed
+    -- Re-check availability against combined totals and scale back if needed
     for key, needed in pairs(totalNeeded) do
         local ing = ingDefs[key]
         local available = countItemIn(chest, ing.id, ing.damage)
         if needed > available then
-            -- Scale back all items that use this ingredient proportionally
             local ratio = available / needed
             print("  -> Scaling back: only " .. available .. " of " .. ing.id .. " available, need " .. needed)
             for _, item in ipairs(items) do
@@ -196,8 +191,9 @@ local function runCycle()
                     end
                 end
             end
-            -- Recalculate totalNeeded after scaling
+            -- Recalculate totalNeeded and ingDefs after scaling
             totalNeeded = {}
+            ingDefs = {}
             for _, it in ipairs(items) do
                 local s = itemSets[it.name] or 0
                 if s > 0 then
@@ -230,7 +226,6 @@ local function runCycle()
         print("Not enough table slots: need " .. stacksToPush .. " have " .. availableSlots)
         print("Waiting 2 min for table to clear...")
         sleep(WAIT_TABLE_FULL)
-        -- Recheck after waiting
         availableSlots = getAvailableTableSlots()
         if stacksToPush > availableSlots then
             print("Table still full, stopping.")
@@ -241,7 +236,9 @@ local function runCycle()
     -- Push all ingredients in one go, looping for multiple stacks
     for key, qty in pairs(totalToPush) do
         local ing = ingDefs[key]
-        if ing and qty > 0 then
+        if ing == nil then
+            print("Warning: no ingredient definition found for key " .. key .. ", skipping")
+        elseif qty > 0 then
             local remaining = qty
             while remaining > 0 do
                 local slot = findSlot(ing.id, ing.damage)
@@ -295,7 +292,6 @@ while true do
     local senderID, message = rednet.receive()
     print("Triggered by ID " .. senderID .. ": " .. tostring(message))
 
-    -- Fix 3: repeat cycle up to MAX_CYCLES times until fully stocked
     local cycleCount = 0
     local fullyStocked = false
     repeat
