@@ -4,6 +4,7 @@ local TARGET = TARGET_STACKS * STACK
 local WAIT_MISSING = 5
 local WAIT_TABLE_FULL = 120
 local MAX_RETRIES = 3
+local MAX_CYCLES = 3
 local TABLE_SLOTS = 12
 
 local chest = peripheral.wrap("bottom")
@@ -164,22 +165,24 @@ local function runCycle()
     local counts = countOutputs()
     if isFullyStocked(counts) then
         print("Already fully stocked, nothing to do.")
-        return
+        return true
     end
 
     print("--- Checking stock ---")
     local missingRetries = 0
-    local tableRetries = 0
     local inTable = getTableIngredients()
-    local totalToPush = {}
-    local ingMap = {}  -- maps key back to ingredient definition for push step
+    local ingDefs = {}
+    local totalNeeded = {}
 
+    -- First pass: calculate how many sets of each item we need and can make
+    local itemSets = {}
     for _, item in ipairs(items) do
         local have = counts[item.name] or 0
+        local need = TARGET - have
         print(item.name .. ": " .. have .. "/" .. TARGET)
 
-        if have < TARGET then
-            local sets = STACK
+        if need > 0 then
+            local sets = need
             local canPush = true
 
             for _, ing in ipairs(item.ingredients) do
@@ -191,7 +194,7 @@ local function runCycle()
                     print("  -> No " .. ing.id .. " available (" .. missingRetries .. "/" .. MAX_RETRIES .. ")")
                     if missingRetries >= MAX_RETRIES then
                         print("  -> Too many missing ingredient failures, stopping.")
-                        return
+                        return false
                     end
                     sleep(WAIT_MISSING)
                     break
@@ -201,51 +204,99 @@ local function runCycle()
             end
 
             if canPush then
-                for _, ing in ipairs(item.ingredients) do
-                    local qty = ing.qty or 1
-                    local key = getIngKey(ing)
-                    local alreadyInTable = inTable[key] or 0
-                    local needed = sets * qty
-                    local toPush = math.max(0, needed - alreadyInTable)
-                    inTable[key] = math.max(0, alreadyInTable - needed)
-                    if toPush > 0 then
-                        totalToPush[key] = (totalToPush[key] or 0) + toPush
-                        ingMap[key] = ing
-                    end
-                end
-                missingRetries = 0
+                itemSets[item.name] = sets
             end
         end
     end
 
-    -- Check we have enough free table slots for all stacks we want to push
-    local stacksToPush = 0
-    for _, qty in pairs(totalToPush) do
-        if qty > 0 then stacksToPush = stacksToPush + 1 end
-    end
-
-    local availableSlots = getAvailableTableSlots()
-    if stacksToPush > availableSlots then
-        tableRetries = tableRetries + 1
-        print("Not enough table slots: need " .. stacksToPush .. " have " .. availableSlots .. " (" .. tableRetries .. "/" .. MAX_RETRIES .. ")")
-        if tableRetries >= MAX_RETRIES then
-            print("Table still full after " .. MAX_RETRIES .. " attempts, stopping.")
-            return
+    -- Second pass: sum ALL ingredient requirements across ALL items
+    for _, item in ipairs(items) do
+        local sets = itemSets[item.name] or 0
+        if sets > 0 then
+            for _, ing in ipairs(item.ingredients) do
+                local qty = ing.qty or 1
+                local key = getIngKey(ing)
+                totalNeeded[key] = (totalNeeded[key] or 0) + (sets * qty)
+                ingDefs[key] = ing
+            end
         end
-        sleep(WAIT_TABLE_FULL)
     end
 
-    -- Push all ingredients in one go
+    -- Scale back if shared ingredients are over-committed
+    for key, needed in pairs(totalNeeded) do
+        local ing = ingDefs[key]
+        local available = countItemIn(chest, ing)
+        if needed > available then
+            local ratio = available / needed
+            print("  -> Scaling back: only " .. available .. " of " .. ing.id .. " available, need " .. needed)
+            for _, item in ipairs(items) do
+                if itemSets[item.name] then
+                    for _, itemIng in ipairs(item.ingredients) do
+                        if getIngKey(itemIng) == key then
+                            itemSets[item.name] = math.floor(itemSets[item.name] * ratio)
+                        end
+                    end
+                end
+            end
+            -- Recalculate totalNeeded and ingDefs after scaling
+            totalNeeded = {}
+            ingDefs = {}
+            for _, it in ipairs(items) do
+                local s = itemSets[it.name] or 0
+                if s > 0 then
+                    for _, i in ipairs(it.ingredients) do
+                        local k = getIngKey(i)
+                        totalNeeded[k] = (totalNeeded[k] or 0) + (s * (i.qty or 1))
+                        ingDefs[k] = i
+                    end
+                end
+            end
+        end
+    end
+
+    -- Subtract what's already in the table
+    local totalToPush = {}
+    for key, needed in pairs(totalNeeded) do
+        local alreadyInTable = inTable[key] or 0
+        local toPush = math.max(0, needed - alreadyInTable)
+        if toPush > 0 then
+            totalToPush[key] = toPush
+        end
+    end
+
+    -- Check available table slots
+    local stacksToPush = 0
+    for _ in pairs(totalToPush) do stacksToPush = stacksToPush + 1 end
+    local availableSlots = getAvailableTableSlots()
+
+    if stacksToPush > availableSlots then
+        print("Not enough table slots: need " .. stacksToPush .. " have " .. availableSlots)
+        print("Waiting 2 min for table to clear...")
+        sleep(WAIT_TABLE_FULL)
+        availableSlots = getAvailableTableSlots()
+        if stacksToPush > availableSlots then
+            print("Table still full, stopping.")
+            return false
+        end
+    end
+
+    -- Push all ingredients, looping for multiple stacks
     for key, qty in pairs(totalToPush) do
-        if qty > 0 then
-            local ing = ingMap[key]
-            if ing then
+        local ing = ingDefs[key]
+        if ing == nil then
+            print("Warning: no ingredient definition for key " .. key .. ", skipping")
+        elseif qty > 0 then
+            local remaining = qty
+            while remaining > 0 do
                 local slot = findSlot(ing)
                 if slot then
-                    print("Pushing " .. qty .. "x " .. ing.id)
-                    chest.pushItems(above_name, slot, qty)
+                    local toPush = math.min(remaining, STACK)
+                    print("Pushing " .. toPush .. "x " .. ing.id .. " (" .. remaining .. " remaining)")
+                    chest.pushItems(above_name, slot, toPush)
+                    remaining = remaining - toPush
                 else
                     print("Could not find " .. ing.id .. " in chest!")
+                    break
                 end
             end
         end
@@ -275,7 +326,8 @@ local function runCycle()
         end
     until clearCount >= 3
 
-    print("Cycle complete.")
+    local finalCounts = countOutputs()
+    return isFullyStocked(finalCounts)
 end
 
 -- Main loop
@@ -286,6 +338,23 @@ print("Listening for rednet trigger...")
 while true do
     local senderID, message = rednet.receive()
     print("Triggered by ID " .. senderID .. ": " .. tostring(message))
-    runCycle()
-    print("Cycle complete, listening again...")
+
+    local cycleCount = 0
+    local fullyStocked = false
+    repeat
+        cycleCount = cycleCount + 1
+        print("--- Cycle " .. cycleCount .. "/" .. MAX_CYCLES .. " ---")
+        fullyStocked = runCycle()
+        if not fullyStocked and cycleCount < MAX_CYCLES then
+            print("Not fully stocked, running another cycle...")
+        end
+    until fullyStocked or cycleCount >= MAX_CYCLES
+
+    if fullyStocked then
+        print("Fully stocked after " .. cycleCount .. " cycle(s).")
+    else
+        print("Max cycles reached, some items may still be low.")
+    end
+
+    print("Listening again...")
 end
