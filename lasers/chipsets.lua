@@ -165,14 +165,22 @@ local function runCycle()
 
     -- Second pass: sum up ALL ingredient requirements across ALL items
     -- This correctly handles shared ingredients like redstone
-    for _, item in ipairs(items) do
-        local sets = itemSets[item.name] or 0
-        if sets > 0 then
-            for _, ing in ipairs(item.ingredients) do
-                local qty = ing.qty or 1
-                local key = ing.id .. ":" .. ing.damage
-                totalNeeded[key] = (totalNeeded[key] or 0) + (sets * qty)
-                ingDefs[key] = ing
+    -- Push all ingredients in one go, looping for multiple stacks
+    for key, qty in pairs(totalToPush) do
+        local ing = ingDefs[key]
+        if ing and qty > 0 then
+            local remaining = qty
+            while remaining > 0 do
+                local slot = findSlot(ing.id, ing.damage)
+                if slot then
+                    local toPush = math.min(remaining, STACK)
+                    print("Pushing " .. toPush .. "x " .. ing.id .. " (" .. remaining .. " remaining)")
+                    chest.pushItems(above_name, slot, toPush)
+                    remaining = remaining - toPush
+                else
+                    print("Could not find " .. ing.id .. " in chest!")
+                    break
+                end
             end
         end
     end
