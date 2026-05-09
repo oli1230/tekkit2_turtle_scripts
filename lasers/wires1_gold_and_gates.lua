@@ -16,7 +16,7 @@ local WIRE = "buildcrafttransport:wire"
 
 local GATE_HASHES = {
     GOLD_AND_BASE    = "7a7c48a5e82f01f41d1bdeb639156b83",
-    GOLD_AND_LAPIS   = "2503e685b0cedd3c0dd1f3330605f87f",
+    GOLD_AND_LAPIS   = "2502e685b0cedd3c0dd1f3330605f87f",
     GOLD_AND_QUARTZ  = "167fe419e90e1ac4007c873ac0959fee",
     GOLD_AND_DIAMOND = "d08c0c611d055fda7fc1adfbfbc06ace",
 }
