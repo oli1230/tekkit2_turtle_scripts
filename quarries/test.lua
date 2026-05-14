@@ -1,7 +1,13 @@
 local p = peripheral.wrap("left")
 
--- Check how many slots/parts the chassis has
 local parts = p.listParts()
 for k, v in pairs(parts) do
-    print(k, v)
+    if type(v) == "table" then
+        print("Slot " .. k .. ":")
+        for k2, v2 in pairs(v) do
+            print("  " .. tostring(k2) .. " = " .. tostring(v2))
+        end
+    else
+        print(k, v)
+    end
 end
