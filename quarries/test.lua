@@ -1,9 +1,12 @@
 local p = peripheral.wrap("left")
-local mod = p.getModuleInSlot(1)
-if mod then
-    for k, v in pairs(mod) do
+
+-- Try commandHelp first
+print("=== commandHelp ===")
+local help = p.commandHelp()
+if type(help) == "table" then
+    for k, v in pairs(help) do
         print(tostring(k) .. " = " .. tostring(v))
     end
 else
-    print("No module in slot 1")
+    print(tostring(help))
 end
