@@ -1,12 +1,14 @@
 local p = peripheral.wrap("left")
+local f = fs.open("commandHelp_output.txt", "w")
 
--- Try commandHelp first
-print("=== commandHelp ===")
 local help = p.commandHelp()
 if type(help) == "table" then
     for k, v in pairs(help) do
-        print(tostring(k) .. " = " .. tostring(v))
+        f.writeLine(tostring(k) .. " = " .. tostring(v))
     end
 else
-    print(tostring(help))
+    f.writeLine(tostring(help))
 end
+
+f.close()
+print("Done, saved to commandHelp_output.txt")
