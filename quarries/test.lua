@@ -1,13 +1,9 @@
 local p = peripheral.wrap("left")
-
-local parts = p.listParts()
-for k, v in pairs(parts) do
-    if type(v) == "table" then
-        print("Slot " .. k .. ":")
-        for k2, v2 in pairs(v) do
-            print("  " .. tostring(k2) .. " = " .. tostring(v2))
-        end
-    else
-        print(k, v)
+local mod = p.getModuleInSlot(1)
+if mod then
+    for k, v in pairs(mod) do
+        print(tostring(k) .. " = " .. tostring(v))
     end
+else
+    print("No module in slot 1")
 end
